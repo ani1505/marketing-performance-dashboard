@@ -1,3 +1,4 @@
+<<<<<<< HEAD
 # Marketing Performance Hub
 
 A light-theme Streamlit dashboard and Excel data-entry tool built for the supplied workbook.
@@ -96,3 +97,6 @@ The date filter uses `MasterData[Report Date]`. If you later switch to true dail
 ## Deployment note
 
 If this app is deployed for multiple people, add authentication and store the workbook on a shared filesystem or database. Do not allow several independent app servers to write separate local copies of the workbook. The included file lock protects concurrent writes on a single shared filesystem.
+=======
+# marketing-performance-dashboard
+>>>>>>> 703a6092301365dd6ebf3281123e464f5b26832f
