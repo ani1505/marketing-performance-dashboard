@@ -1,12 +1,13 @@
 from __future__ import annotations
 
+import html
 import os
 from datetime import date, timedelta
 from pathlib import Path
+from urllib.parse import urldefrag
 
 import pandas as pd
 import plotly.express as px
-import plotly.graph_objects as go
 import streamlit as st
 
 from data_store import COMPANY_CURRENCY_RULES, WorkbookStore
@@ -16,7 +17,7 @@ from data_store import COMPANY_CURRENCY_RULES, WorkbookStore
 # App configuration
 # -----------------------------------------------------------------------------
 st.set_page_config(
-    page_title="Marketing Performance Hub",
+    page_title="Marketing Performance Dashboard",
     page_icon="📊",
     layout="wide",
     initial_sidebar_state="collapsed",
@@ -28,141 +29,319 @@ WORKBOOK_PATH = Path(
 )
 STORE = WorkbookStore(WORKBOOK_PATH)
 
+# Palette sampled/matched to the supplied Power BI dashboard.
 COLORS = {
-    "orange": "#3F7CAC",
-    "orange_dark": "#17324D",
-    "black": "#17324D",
-    "charcoal": "#53677A",
-    "text": "#25364A",
-    "muted": "#718096",
-    "line": "#DCE5EC",
-    "panel": "#F8FAFC",
+    "orange": "#F18758",
+    "orange_dark": "#E97849",
+    "orange_soft": "#F8B08F",
+    "page_grey": "#E1E1E1",
+    "grid": "#ECECEC",
     "white": "#FFFFFF",
+    "text": "#242424",
+    "muted": "#666666",
+    "header_grey": "#6C6C6C",
+    "row_grey": "#F3F3F3",
+    "row_grey_alt": "#E8E8E8",
+    "border": "#E0E0E0",
 }
-
-PLOT_COLORS = ["#3F7CAC", "#17324D", "#7895B2", "#A8C7DF", "#6B7A8C", "#DCE5EC"]
 
 
 # -----------------------------------------------------------------------------
-# Styling
+# Power BI look-and-feel
 # -----------------------------------------------------------------------------
 st.markdown(
-    """
-<style>
-:root {
-  --bg: #F8FAFC;
-  --panel: #FFFFFF;
-  --soft: #F1F5F9;
-  --line: #E2E8F0;
-  --text: #25364A;
-  --muted: #718096;
-  --orange: #3F7CAC;
-  --orange-soft: #EAF4FB;
-  --black: #17324D;
-  --grey: #6B7A8C;
-}
+    f"""
+    <style>
+    :root {{
+      --orange: {COLORS['orange']};
+      --orange-dark: {COLORS['orange_dark']};
+      --page-grey: {COLORS['page_grey']};
+      --text: {COLORS['text']};
+      --muted: {COLORS['muted']};
+      --white: #FFFFFF;
+      --border: {COLORS['border']};
+    }}
 
-html, body, [class*="css"] { font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
-.stApp { background: var(--bg); color: var(--text); }
-.block-container { padding-top: 1.25rem; padding-bottom: 2rem; max-width: 1580px; }
+    html, body, [class*="css"] {{
+      font-family: "Segoe UI", Arial, sans-serif;
+    }}
 
-/* Header */
-.hero {
-  padding: 1.2rem 1.35rem;
-  background: linear-gradient(120deg, #FFFFFF 0%, #EEF6FC 100%);
-  border: 1px solid var(--line);
-  border-left: 5px solid var(--orange);
-  border-radius: 18px;
-  margin-bottom: 0.9rem;
-  box-shadow: 0 8px 24px rgba(17, 17, 17, 0.05);
-}
-.hero h1 { margin: 0; font-size: 1.78rem; color: var(--black); letter-spacing: -0.03em; }
-.hero p { margin: 0.28rem 0 0; color: var(--muted); font-size: 0.93rem; }
+    .stApp {{
+      background:
+        linear-gradient(153deg, transparent 0 71%, rgba(255,255,255,.88) 71.1% 100%),
+        linear-gradient(16deg, rgba(255,255,255,.78) 0 12%, transparent 12.1% 100%),
+        var(--page-grey);
+      color: var(--text);
+    }}
 
-/* Panels */
-.panel-title { font-weight: 800; color: #202020; font-size: 1rem; margin: 0 0 0.28rem; }
-.panel-subtitle { color: #7A7A7A; font-size: 0.78rem; margin-bottom: 0.4rem; }
-[data-testid="stVerticalBlockBorderWrapper"] {
-  border-radius: 16px !important;
-  border-color: #DCE5EC !important;
-  background: #FFFFFF;
-  box-shadow: 0 5px 18px rgba(23,50,77,0.045);
-}
+    .block-container {{
+      max-width: 1920px;
+      padding: .25rem 4.6rem 1.1rem 4.6rem;
+    }}
 
-/* KPI Cards */
-.kpi-card {
-  min-height: 118px;
-  background: #FFFFFF;
-  border: 1px solid #DCE5EC;
-  border-top: 4px solid var(--orange);
-  border-radius: 16px;
-  padding: 1rem 1.05rem;
-  box-shadow: 0 5px 16px rgba(17,17,17,0.04);
-  display: flex;
-  flex-direction: column;
-  justify-content: space-between;
-}
-.kpi-label { color: #767676; font-size: 0.76rem; font-weight: 800; letter-spacing: 0.05em; text-transform: uppercase; }
-.kpi-value { color: #17324D; font-size: 1.55rem; line-height: 1.14; font-weight: 850; letter-spacing: -0.03em; overflow-wrap: anywhere; }
-.kpi-value.currency { font-size: 1.10rem; line-height: 1.3; }
-.kpi-foot { color: #969696; font-size: 0.71rem; margin-top: 0.35rem; }
+    /* Make Streamlit chrome disappear so the page feels like the PBIX canvas. */
+    #MainMenu {{ visibility: hidden; }}
+    footer {{ visibility: hidden; }}
+    header[data-testid="stHeader"] {{ background: transparent; }}
 
-/* Filter section */
-.filter-strip {
-  background: #FFFFFF;
-  border: 1px solid #DCE5EC;
-  border-radius: 16px;
-  padding: 0.2rem 0.75rem 0.55rem;
-  margin-bottom: 0.9rem;
-  box-shadow: 0 4px 14px rgba(17,17,17,0.025);
-}
-div[data-baseweb="select"] > div { border-radius: 10px !important; }
-.stDateInput input { border-radius: 10px !important; }
-.stButton > button, .stDownloadButton > button {
-  border-radius: 10px;
-  font-weight: 750;
-  border: 1px solid #D5E0E8;
-}
-.stButton > button[kind="primary"] {
-  background: #17324D;
-  border-color: #17324D;
-}
+    .brand-slot {{
+      height: 54px;
+      display: flex;
+      align-items: center;
+      justify-content: flex-start;
+      overflow: hidden;
+      margin-top: 2px;
+    }}
+    .brand-logo {{
+      max-width: 190px;
+      max-height: 50px;
+      object-fit: contain;
+      object-position: left center;
+      display: block;
+    }}
+    .brand-fallback {{
+      color: #000;
+      font-size: 32px;
+      line-height: 1;
+      font-weight: 800;
+      letter-spacing: -1.5px;
+    }}
+    .overview-title {{
+      font-size: 30px;
+      font-weight: 700;
+      color: #828282;
+      line-height: 1;
+      margin: -2px 0 14px 4px;
+    }}
 
-[data-testid="stDataFrame"] { border: 1px solid #DCE5EC; border-radius: 12px; overflow: hidden; }
-[data-testid="stSidebar"] { background: #FFFFFF; border-right: 1px solid #DCE5EC; }
+    /* Slicers */
+    [data-testid="stSelectbox"], [data-testid="stDateInput"] {{ margin-bottom: 0 !important; }}
+    [data-testid="stSelectbox"] label,
+    [data-testid="stDateInput"] label,
+    [data-testid="stPills"] label,
+    [data-testid="stButtonGroup"] label {{
+      font-size: 14px !important;
+      font-weight: 500 !important;
+      color: #252525 !important;
+      padding-bottom: 2px !important;
+    }}
+    div[data-baseweb="select"] > div {{
+      min-height: 34px !important;
+      height: 34px !important;
+      border: 1px solid #C9C9C9 !important;
+      border-radius: 3px !important;
+      background: rgba(255,255,255,.18) !important;
+      box-shadow: none !important;
+    }}
+    [data-testid="stDateInput"] input {{
+      min-height: 34px !important;
+      height: 34px !important;
+      border-radius: 2px !important;
+      border: 1px solid #D2D2D2 !important;
+      background: rgba(255,255,255,.12) !important;
+      color: #333 !important;
+      font-size: 13px !important;
+    }}
 
-.currency-note {
-  display: inline-block;
-  padding: 0.42rem 0.7rem;
-  background: #EEF6FC;
-  border: 1px solid #CFE0EE;
-  border-radius: 10px;
-  color: #315E83;
-  font-size: 0.78rem;
-}
-.success-note {
-  padding: 0.75rem 0.9rem;
-  background: #F8FAFC;
-  border: 1px solid #DCE5EC;
-  color: #263445;
-  border-left: 4px solid #3F7CAC;
-  border-radius: 12px;
-  font-size: 0.85rem;
-}
 
-.kpi-card, [data-testid="stVerticalBlockBorderWrapper"], .filter-strip {
-  transition: transform 0.18s ease, box-shadow 0.18s ease;
-}
-.kpi-card:hover {
-  transform: translateY(-2px);
-  box-shadow: 0 10px 24px rgba(23,50,77,0.08);
-}
-.filter-strip {
-  border-top: 3px solid #3F7CAC;
-}
+    .slicer-caption {{
+      font-size: 14px;
+      font-weight: 500;
+      color: #252525;
+      line-height: 1.15;
+      margin: 0 0 5px 0;
+    }}
+    /* Currency/date tile controls: only the actual choice buttons are visible. */
+    [data-testid="stButtonGroup"] {{
+      margin-top: 0 !important;
+      width: 100% !important;
+    }}
+    [data-testid="stButtonGroup"] > div {{
+      display: flex !important;
+      width: 100% !important;
+      gap: 5px !important;
+      flex-wrap: nowrap !important;
+      overflow: visible !important;
+    }}
 
-</style>
-""",
+    /* Currency + Date buttons: fully clickable, responsive Power BI tiles. */
+    [data-testid="stPills"] button,
+    [data-testid="stButtonGroup"] button,
+    div[role="radiogroup"] button {{
+      flex: 1 1 0 !important;
+      min-width: 0 !important;
+      width: 100% !important;
+      min-height: 34px !important;
+      height: 34px !important;
+      padding: 2px 8px !important;
+      border-radius: 4px !important;
+      border: 1px solid #D4D4D4 !important;
+      background: #FFFFFF !important;
+      color: #333333 !important;
+      font-size: 13px !important;
+      line-height: 1 !important;
+      white-space: nowrap !important;
+      cursor: pointer !important;
+      box-shadow: none !important;
+      transition: background-color .16s ease, border-color .16s ease,
+                  box-shadow .16s ease, transform .16s ease !important;
+    }}
+
+    [data-testid="stPills"] button:hover,
+    [data-testid="stButtonGroup"] button:hover,
+    div[role="radiogroup"] button:hover {{
+      background: #EFEFEF !important;
+      border-color: #AFAFAF !important;
+      box-shadow: 0 2px 6px rgba(0,0,0,.10) !important;
+      transform: translateY(-1px);
+    }}
+
+    /* Selected tile is grey, as in the Power BI-style slicer. */
+    [data-testid="stPills"] button[aria-pressed="true"],
+    [data-testid="stButtonGroup"] button[aria-pressed="true"],
+    div[role="radiogroup"] button[aria-pressed="true"] {{
+      background: #767676 !important;
+      border-color: #767676 !important;
+      color: #FFFFFF !important;
+      font-weight: 600 !important;
+      box-shadow: inset 0 0 0 1px rgba(255,255,255,.08) !important;
+    }}
+    [data-testid="stPills"] button[aria-pressed="true"]:hover,
+    [data-testid="stButtonGroup"] button[aria-pressed="true"]:hover,
+    div[role="radiogroup"] button[aria-pressed="true"]:hover {{
+      background: #666666 !important;
+      border-color: #666666 !important;
+    }}
+
+    /* Keep all date choices on one row. Custom is never clipped. */
+    [data-testid="stPills"] > div {{
+      width: 100% !important;
+      display: flex !important;
+      gap: 5px !important;
+      flex-wrap: nowrap !important;
+      overflow: visible !important;
+    }}
+    .kpi-row-divider {{ height: 9px; }}
+
+    /* Native Streamlit button tiles used for Currency and Date. */
+    div[data-testid="stButton"] > button {{
+      width: 100% !important;
+      min-width: 0 !important;
+      height: 36px !important;
+      min-height: 36px !important;
+      padding: 0 10px !important;
+      border-radius: 4px !important;
+      border: 1px solid #D2D2D2 !important;
+      background: #FFFFFF !important;
+      color: #333333 !important;
+      font-size: 13px !important;
+      font-weight: 500 !important;
+      cursor: pointer !important;
+      box-shadow: none !important;
+      transition: background-color .15s ease, border-color .15s ease, box-shadow .15s ease, transform .15s ease !important;
+    }}
+    div[data-testid="stButton"] > button p,
+    div[data-testid="stButton"] > button span {{
+      white-space: nowrap !important;
+      overflow: visible !important;
+      text-overflow: clip !important;
+      max-width: none !important;
+    }}
+    div[data-testid="stButton"] > button:hover {{
+      background: #ECECEC !important;
+      border-color: #AFAFAF !important;
+      box-shadow: 0 2px 6px rgba(0,0,0,.10) !important;
+      transform: translateY(-1px) !important;
+    }}
+    div[data-testid="stButton"] > button[kind="primary"],
+    div[data-testid="stButton"] > button[data-testid="baseButton-primary"] {{
+      background: #777777 !important;
+      border-color: #777777 !important;
+      color: #FFFFFF !important;
+      font-weight: 600 !important;
+    }}
+    div[data-testid="stButton"] > button[kind="primary"] p,
+    div[data-testid="stButton"] > button[data-testid="baseButton-primary"] p {{
+      color: #FFFFFF !important;
+    }}
+    div[data-testid="stButton"] > button[kind="primary"]:hover,
+    div[data-testid="stButton"] > button[data-testid="baseButton-primary"]:hover {{
+      background: #666666 !important;
+      border-color: #666666 !important;
+    }}
+
+    /* KPI cards */
+    .kpi-card {{
+      height: 49px;
+      min-height: 49px;
+      background: rgba(255,255,255,.96);
+      border: 0;
+      border-radius: 7px;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      padding: 3px 8px 2px;
+      overflow: hidden;
+    }}
+    .kpi-label {{
+      color: #6B6B6B;
+      font-size: 12px;
+      font-weight: 400;
+      line-height: 1;
+      white-space: nowrap;
+    }}
+    .kpi-value {{
+      color: #202020;
+      font-size: 22px;
+      font-weight: 600;
+      line-height: 1.15;
+      margin-top: 4px;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      max-width: 100%;
+    }}
+    .kpi-value.money {{ font-size: 20px; }}
+
+    /* White visual canvases from the report. */
+    [data-testid="stVerticalBlockBorderWrapper"] {{
+      border: 0 !important;
+      border-radius: 7px !important;
+      background: rgba(255,255,255,.97) !important;
+      box-shadow: none !important;
+      overflow: hidden !important;
+    }}
+    .visual-title {{
+      font-size: 14px;
+      font-weight: 500;
+      color: #242424;
+      line-height: 1.1;
+      margin: 2px 0 0 1px;
+    }}
+    .visual-subtitle {{
+      font-size: 12px;
+      font-weight: 400;
+      color: #666666;
+      line-height: 1.05;
+      margin: 4px 0 0 1px;
+    }}
+
+    [data-testid="stDataFrame"] {{ border: 0 !important; border-radius: 0 !important; }}
+    [data-testid="stSidebar"] {{ background: #FFFFFF; border-right: 1px solid #DDDDDD; }}
+
+    /* Tighten the vertical rhythm to match a 1920×1080 Power BI canvas. */
+    div[data-testid="stHorizontalBlock"] {{ gap: .72rem; }}
+    div[data-testid="stVerticalBlock"] > div:has(.kpi-card) {{ margin-bottom: 0 !important; }}
+
+    @media (max-width: 1200px) {{
+      .block-container {{ padding-left: 1rem; padding-right: 1rem; }}
+      .brand-logo {{ max-width: 155px; }}
+      .kpi-value {{ font-size: 18px; }}
+      .kpi-value.money {{ font-size: 15px; }}
+    }}
+    </style>
+    """,
     unsafe_allow_html=True,
 )
 
@@ -172,7 +351,6 @@ div[data-baseweb="select"] > div { border-radius: 10px !important; }
 # -----------------------------------------------------------------------------
 @st.cache_data(show_spinner=False, ttl=20)
 def load_data(path_str: str, modified_time: float):
-    # modified_time is intentionally part of the cache key.
     store = WorkbookStore(path_str)
     return store.load_dashboard_data()
 
@@ -191,20 +369,23 @@ def human_number(value: float | int) -> str:
     if abs(value) >= 1_000_000:
         return f"{value / 1_000_000:.2f}M"
     if abs(value) >= 1_000:
-        return f"{value / 1_000:.1f}K"
+        return f"{value / 1_000:.0f}K"
     return f"{value:,.0f}"
 
 
-def pct(value: float) -> str:
-    return f"{value * 100:.2f}%" if pd.notna(value) else "—"
+def ratio_text(value: float) -> str:
+    return f"{float(value or 0):.2f}"
 
 
 def currency_breakdown(df: pd.DataFrame, symbols: dict[str, str], metric: str = "spend") -> str:
+    """Return each currency independently. Never add GBP, INR, USD, etc. together."""
     if df.empty:
         return "—"
-    parts = []
-    for currency, group in df.groupby("Currency", dropna=False):
-        currency = str(currency)
+    parts: list[str] = []
+    currency_values = df.get("Currency", pd.Series(dtype=str)).dropna().astype(str).unique().tolist()
+    currency_values = sorted(currency_values, key=lambda c: {"GBP": 0, "INR": 1, "USD": 2}.get(c, 99))
+    for currency in currency_values:
+        group = df[df["Currency"].astype(str) == currency]
         symbol = symbols.get(currency, "")
         spend = pd.to_numeric(group["Total Spend"], errors="coerce").fillna(0).sum()
         clicks = pd.to_numeric(group["Clicks"], errors="coerce").fillna(0).sum()
@@ -218,90 +399,169 @@ def currency_breakdown(df: pd.DataFrame, symbols: dict[str, str], metric: str = 
         else:
             raise ValueError(metric)
         parts.append(f"{symbol}{value:,.2f} {currency}")
-    return "  ·  ".join(parts)
+    return " | ".join(parts)
 
 
-def metric_card(label: str, value: str, footer: str = "", currency: bool = False):
-    value_class = "kpi-value currency" if currency else "kpi-value"
+def metric_card(label: str, value: str, money: bool = False):
+    value_class = "kpi-value money" if money else "kpi-value"
     st.markdown(
-        f"""
-        <div class="kpi-card">
-          <div class="kpi-label">{label}</div>
-          <div class="{value_class}">{value}</div>
-          <div class="kpi-foot">{footer}</div>
-        </div>
-        """,
+        f'<div class="kpi-card"><div class="kpi-label">{html.escape(label)}</div>'
+        f'<div class="{value_class}">{html.escape(value)}</div></div>',
         unsafe_allow_html=True,
     )
 
 
-def style_plot(fig, height=340, legend=True):
+def style_plot(fig, height=330, legend=False):
     fig.update_layout(
         template="plotly_white",
         height=height,
-        margin=dict(l=20, r=18, t=44, b=25),
-        paper_bgcolor="rgba(0,0,0,0)",
-        plot_bgcolor="#FFFFFF",
-        font=dict(family="Inter, Arial", color="#53677A", size=12),
-        title_font=dict(size=15, color="#17324D"),
-        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
+        margin=dict(l=38, r=20, t=16, b=34),
+        paper_bgcolor="rgba(255,255,255,0)",
+        plot_bgcolor="rgba(255,255,255,0)",
+        font=dict(family="Segoe UI, Arial", color=COLORS["text"], size=11),
         showlegend=legend,
-        hoverlabel=dict(bgcolor="white", font_size=12, font_color="#17324D"),
+        legend=dict(
+            orientation="h",
+            yanchor="bottom",
+            y=1.01,
+            xanchor="right",
+            x=1,
+            font=dict(size=10),
+        ),
+        hoverlabel=dict(bgcolor="white", font_color="#242424", bordercolor="#D5D5D5"),
+        bargap=.58,
     )
-    fig.update_xaxes(showgrid=False, linecolor="#DCE5EC", tickfont=dict(color="#6B7A8C"))
-    fig.update_yaxes(gridcolor="#EEF3F7", zeroline=False, tickfont=dict(color="#6B7A8C"))
+    fig.update_xaxes(
+        showgrid=True,
+        gridcolor=COLORS["grid"],
+        linecolor="rgba(0,0,0,0)",
+        zeroline=False,
+        tickfont=dict(color="#646464", size=10),
+        title_font=dict(size=10, color="#444444"),
+    )
+    fig.update_yaxes(
+        showgrid=True,
+        gridcolor=COLORS["grid"],
+        linecolor="rgba(0,0,0,0)",
+        zeroline=False,
+        tickfont=dict(color="#646464", size=10),
+        title_font=dict(size=10, color="#444444"),
+    )
     return fig
-
-def pills(label: str, options: list[str], default, key: str, selection_mode: str = "single"):
-    """Use st.pills when available; fallback to selectbox/multiselect."""
-    if hasattr(st, "pills"):
-        return st.pills(label, options, default=default, key=key, selection_mode=selection_mode)
-    if selection_mode == "multi":
-        return st.multiselect(label, options, default=default, key=key)
-    index = options.index(default) if default in options else 0
-    return st.selectbox(label, options, index=index, key=key)
-
-
-def filter_date(df: pd.DataFrame, period: str, custom_range=None) -> pd.DataFrame:
-    if df.empty or "Report Date" not in df.columns:
-        return df
-    out = df.copy()
-    dates = pd.to_datetime(out["Report Date"], errors="coerce").dt.date
-    today = date.today()
-
-    if period == "Yesterday":
-        target = today - timedelta(days=1)
-        return out[dates == target]
-    if period == "Last Week":
-        this_monday = today - timedelta(days=today.weekday())
-        start = this_monday - timedelta(days=7)
-        end = this_monday - timedelta(days=1)
-        return out[(dates >= start) & (dates <= end)]
-    if period == "Custom" and custom_range:
-        start, end = custom_range
-        return out[(dates >= start) & (dates <= end)]
-    return out
 
 
 def available_currency_options(company: str, master: pd.DataFrame, currency_df: pd.DataFrame) -> list[str]:
-    all_codes = [str(v).strip() for v in currency_df.get("Currency", pd.Series(dtype=str)).dropna().tolist()]
-    if company != "All Clients":
-        return COMPANY_CURRENCY_RULES.get(company, all_codes)
-    present = [str(v).strip() for v in master.get("Currency", pd.Series(dtype=str)).dropna().unique().tolist()]
-    return [c for c in all_codes if c in present] or all_codes
+    all_codes = [
+        str(v).strip()
+        for v in currency_df.get("Currency", pd.Series(dtype=str)).dropna().tolist()
+    ]
+    allowed = COMPANY_CURRENCY_RULES.get(company, all_codes)
+    present = [
+        str(v).strip()
+        for v in master.loc[
+            master["Company"].astype(str) == company, "Currency"
+        ].dropna().unique().tolist()
+    ]
+    return [c for c in allowed if c in present] or allowed
 
 
-def primary_currency_text(company: str, companies: pd.DataFrame, symbols: dict[str, str]) -> str:
-    if company == "All Clients":
-        return "Multiple currencies — monetary values are always separated"
-    allowed = COMPANY_CURRENCY_RULES.get(company)
-    if allowed:
-        return " · ".join(f"{symbols.get(c, '')} {c}".strip() for c in allowed)
-    match = companies[companies["Company Name"].astype(str) == company]
-    if match.empty:
-        return ""
-    c = str(match.iloc[0].get("Native Currency", ""))
-    return f"{symbols.get(c, '')} {c}".strip()
+def company_logo_url(companies: pd.DataFrame, company: str) -> str | None:
+    if "Logo" not in companies.columns:
+        return None
+    row = companies[companies["Company Name"].astype(str) == company]
+    if row.empty:
+        return None
+    value = row.iloc[0].get("Logo")
+    if pd.isna(value) or not str(value).strip():
+        return None
+    return urldefrag(str(value).strip())[0]
+
+
+def _tile_button_row(options: list[str], state_key: str, default: str | None = None, allow_clear: bool = False) -> str | None:
+    """Render responsive, fully-clickable Streamlit buttons with selected state."""
+    if state_key not in st.session_state:
+        st.session_state[state_key] = default
+
+    # Keep stale selections from surviving when the available options change.
+    if st.session_state[state_key] not in options and st.session_state[state_key] is not None:
+        st.session_state[state_key] = default
+
+    cols = st.columns([1] * max(len(options), 1), gap="small")
+    current = st.session_state[state_key]
+    for col, option in zip(cols, options):
+        with col:
+            selected = current == option
+            if st.button(
+                option,
+                key=f"{state_key}__{option}",
+                type="primary" if selected else "secondary",
+                use_container_width=True,
+            ):
+                if allow_clear and selected:
+                    st.session_state[state_key] = None
+                else:
+                    st.session_state[state_key] = option
+                current = st.session_state[state_key]
+                st.rerun()
+    return current
+
+
+def currency_selector(options: list[str], key: str) -> str:
+    """Power BI-style currency tiles. No selected tile means all company currencies."""
+    st.markdown('<div class="slicer-caption">Currency</div>', unsafe_allow_html=True)
+    selected = _tile_button_row(list(options), key, default=None, allow_clear=True)
+    return selected or "All"
+
+def _visual_heading(title: str, subtitle: str | None = None):
+    st.markdown(f'<div class="visual-title">{html.escape(title)}</div>', unsafe_allow_html=True)
+    if subtitle:
+        st.markdown(f'<div class="visual-subtitle">{html.escape(subtitle)}</div>', unsafe_allow_html=True)
+
+
+def _brand_html(logo_url: str | None, company: str) -> str:
+    if logo_url:
+        safe_url = html.escape(logo_url, quote=True)
+        safe_company = html.escape(company, quote=True)
+        return (
+            '<div class="brand-slot">'
+            f'<img class="brand-logo" src="{safe_url}" alt="{safe_company} logo" '
+            'onerror="this.style.display=\'none\';this.nextElementSibling.style.display=\'block\';">'
+            f'<div class="brand-fallback" style="display:none">{html.escape(company)}</div>'
+            '</div>'
+        )
+    return f'<div class="brand-slot"><div class="brand-fallback">{html.escape(company)}</div></div>'
+
+
+def _table_styler(df: pd.DataFrame):
+    def row_style(row):
+        if str(row.get("Campaign Name", "")) == "Total":
+            return [
+                f"background-color: {COLORS['orange']}; color: white; font-weight: 700;"
+                for _ in row
+            ]
+        idx = row.name if isinstance(row.name, int) else 0
+        bg = COLORS["row_grey"] if idx % 2 == 0 else COLORS["row_grey_alt"]
+        return [f"background-color: {bg}; color: #242424;" for _ in row]
+
+    return (
+        df.style
+        .apply(row_style, axis=1)
+        .set_table_styles([
+            {
+                "selector": "th",
+                "props": [
+                    ("background-color", COLORS["header_grey"]),
+                    ("color", "white"),
+                    ("font-weight", "500"),
+                    ("border", "1px solid #BFBFBF"),
+                ],
+            },
+            {
+                "selector": "td",
+                "props": [("border", "1px solid #F1F1F1")],
+            },
+        ])
+    )
 
 
 # -----------------------------------------------------------------------------
@@ -315,92 +575,103 @@ def render_dashboard():
         if pd.notna(row.get("Currency"))
     }
 
-    st.markdown(
-        """
-        <div class="hero">
-          <h1>Marketing Performance Hub</h1>
-          <p>Campaign performance overview across clients, platforms, regions and dates.</p>
-        </div>
-        """,
-        unsafe_allow_html=True,
+    company_names = companies["Company Name"].dropna().astype(str).tolist()
+    default_company = "Wolfable" if "Wolfable" in company_names else company_names[0]
+
+    # Company must be resolved first so the logo, region/platform and currency controls
+    # all react exactly like report slicers.
+    logo_col, company_col, region_col, platform_col, currency_col, gap_col, date_col = st.columns(
+        [2.05, 1.50, 1.40, 1.40, 1.80, .08, 4.25], gap="small"
     )
 
-    company_names = companies["Company Name"].dropna().astype(str).tolist()
+    with company_col:
+        company = st.selectbox(
+            "Company Name",
+            company_names,
+            index=company_names.index(default_company) if default_company in company_names else 0,
+            key="dashboard_company",
+        )
 
-    st.markdown('<div class="filter-strip">', unsafe_allow_html=True)
-    f1, f2, f3, f4 = st.columns([1.25, 1.1, 1.05, 1.55], gap="medium")
-    with f1:
-        company = st.selectbox("Client", ["All Clients"] + company_names, index=0)
+    logo_url = company_logo_url(companies, company)
+    with logo_col:
+        st.markdown(_brand_html(logo_url, company), unsafe_allow_html=True)
 
-    company_scope = master.copy()
-    if company != "All Clients":
-        company_scope = company_scope[company_scope["Company"].astype(str) == company]
-
-    platform_options = sorted(company_scope["Platform"].dropna().astype(str).unique().tolist())
+    company_scope = master[master["Company"].astype(str) == company].copy()
     region_options = sorted(company_scope["Region"].dropna().astype(str).unique().tolist())
+    platform_options = sorted(company_scope["Platform"].dropna().astype(str).unique().tolist())
 
-    with f2:
-        platform = st.selectbox("Platform", ["All Platforms"] + platform_options)
-    with f3:
-        region = st.selectbox("Region", ["All Regions"] + region_options)
-    with f4:
-        period = pills(
-            "Date",
-            ["Yesterday", "Last Week", "Custom", "Lifetime"],
-            default="Lifetime",
-            key="date_period",
-            selection_mode="single",
-        ) or "Lifetime"
-
-    custom_range = None
-    if period == "Custom":
-        c1, c2 = st.columns([3, 2])
-        with c1:
-            picked = st.date_input(
-                "Custom date range",
-                value=(date.today() - timedelta(days=30), date.today()),
-                format="DD/MM/YYYY",
-            )
-            if isinstance(picked, (tuple, list)) and len(picked) == 2:
-                custom_range = (picked[0], picked[1])
-        with c2:
-            st.caption("Date filtering uses **Report Date** from MasterData.")
+    with region_col:
+        region = st.selectbox("Region", ["All"] + region_options, index=0, key="dashboard_region")
+    with platform_col:
+        platform = st.selectbox("Platform", ["All"] + platform_options, index=0, key="dashboard_platform")
 
     currency_options = available_currency_options(company, master, currency_df)
-    selected_currencies = pills(
-        "Currency",
-        currency_options,
-        default=currency_options.copy(),
-        key=f"currency_{company}",
-        selection_mode="multi",
-    )
-    if not selected_currencies:
-        selected_currencies = currency_options
-    st.markdown("</div>", unsafe_allow_html=True)
+    with currency_col:
+        currency_choice = currency_selector(currency_options, key=f"currency_choice_{company}")
 
-    filtered = master.copy()
-    if company != "All Clients":
-        filtered = filtered[filtered["Company"].astype(str) == company]
-    if platform != "All Platforms":
-        filtered = filtered[filtered["Platform"].astype(str) == platform]
-    if region != "All Regions":
+    date_series = pd.to_datetime(company_scope.get("Report Date"), errors="coerce").dropna()
+    if date_series.empty:
+        min_date = date.today() - timedelta(days=30)
+        max_date = date.today()
+    else:
+        min_date = date_series.min().date()
+        max_date = date_series.max().date()
+
+    with date_col:
+        st.markdown('<div class="slicer-caption">Date</div>', unsafe_allow_html=True)
+        date_choices = ["Yesterday", "Last Week", "Lifetime", "Custom"]
+        date_period = _tile_button_row(
+            date_choices,
+            state_key="dashboard_date_period_value",
+            default="Lifetime",
+            allow_clear=False,
+        ) or "Lifetime"
+
+    # A date-range picker is visible only for the Custom period.
+    # Yesterday and Last Week are based on today's date, rather than the last
+    # report date, and Lifetime includes all historical records.
+    start_date = None
+    end_date = None
+    if date_period == "Yesterday":
+        start_date = end_date = date.today() - timedelta(days=1)
+    elif date_period == "Last Week":
+        this_monday = date.today() - timedelta(days=date.today().weekday())
+        start_date = this_monday - timedelta(days=7)
+        end_date = this_monday - timedelta(days=1)
+    elif date_period == "Custom":
+        with date_col:
+            picked = st.date_input(
+                "Custom date range",
+                value=(min_date, max_date),
+                min_value=min_date,
+                max_value=max(max_date, date.today()),
+                format="MM/DD/YYYY",
+                key=f"dashboard_custom_date_{company}",
+            )
+        if isinstance(picked, (tuple, list)) and len(picked) == 2:
+            start_date, end_date = picked
+        else:
+            st.info("Choose both the start and end dates for the custom range.")
+            st.stop()
+
+    st.markdown('<div class="overview-title">Overview</div>', unsafe_allow_html=True)
+
+    filtered = company_scope.copy()
+    if region != "All":
         filtered = filtered[filtered["Region"].astype(str) == region]
-    if selected_currencies:
-        filtered = filtered[filtered["Currency"].astype(str).isin(selected_currencies)]
-    filtered = filter_date(filtered, period, custom_range)
+    if platform != "All":
+        filtered = filtered[filtered["Platform"].astype(str) == platform]
+    if currency_choice != "All":
+        filtered = filtered[filtered["Currency"].astype(str) == currency_choice]
 
-    currency_text = primary_currency_text(company, companies, symbols)
-    st.markdown(
-        f'<span class="currency-note">Currency selection: <b>{currency_text}</b>. Financial amounts are never converted or added across different currencies.</span>',
-        unsafe_allow_html=True,
-    )
-    st.write("")
+    if start_date is not None and end_date is not None:
+        report_dates = pd.to_datetime(filtered["Report Date"], errors="coerce").dt.date
+        filtered = filtered[(report_dates >= start_date) & (report_dates <= end_date)]
 
     if filtered.empty:
-        st.warning("No rows match the current filters. Try Lifetime or a different company/platform/region/date selection.")
+        st.warning("No rows match the current selection.")
         return
 
-    # ---------- KPI calculations ----------
     impressions = pd.to_numeric(filtered["Impressions"], errors="coerce").fillna(0).sum()
     clicks = pd.to_numeric(filtered["Clicks"], errors="coerce").fillna(0).sum()
     leads = pd.to_numeric(filtered["Total Leads"], errors="coerce").fillna(0).sum()
@@ -410,170 +681,145 @@ def render_dashboard():
     cpl_text = currency_breakdown(filtered, symbols, "cpl")
     cpc_text = currency_breakdown(filtered, symbols, "cpc")
 
-    cards = [
-        ("Total Spend", spend_text, "Native currency totals", True),
-        ("Total Leads", human_number(leads), "Lead volume", False),
-        ("Cost per Lead", cpl_text, "Spend ÷ leads", True),
-        ("CTR", pct(ctr), "Clicks ÷ impressions", False),
-        ("Impressions", human_number(impressions), "Ad impressions", False),
-        ("Clicks", human_number(clicks), "Ad clicks", False),
-        ("Avg. CPC", cpc_text, "Spend ÷ clicks", True),
-        ("Lead Conversion", pct(conversion), "Leads ÷ clicks", False),
-    ]
-    for start in (0, 4):
-        cols = st.columns(4, gap="medium")
-        for col, item in zip(cols, cards[start : start + 4]):
-            with col:
-                metric_card(*item)
-        st.write("")
+    row1 = st.columns(4, gap="small")
+    for col, item in zip(
+        row1,
+        [
+            ("Total Spend Card", spend_text, True),
+            ("Leads", human_number(leads), False),
+            ("CPL Card", cpl_text, True),
+            ("CTR", ratio_text(ctr), False),
+        ],
+    ):
+        with col:
+            metric_card(*item)
 
-    # ---------- Row 1: Leads by platform + Total spend by platform ----------
-    r1a, r1b = st.columns(2, gap="medium")
+    st.markdown('<div class="kpi-row-divider"></div>', unsafe_allow_html=True)
+    row2 = st.columns(4, gap="small")
+    for col, item in zip(
+        row2,
+        [
+            ("Impressions", human_number(impressions), False),
+            ("Clicks", human_number(clicks), False),
+            ("CPC Card", cpc_text, True),
+            ("Conversion Rate", ratio_text(conversion), False),
+        ],
+    ):
+        with col:
+            metric_card(*item)
 
-    with r1a:
+    st.write("")
+
+    # --- Main analytical row -------------------------------------------------
+    c1, c2, c3 = st.columns([532, 554, 617], gap="small")
+
+    with c1:
         with st.container(border=True):
-            st.markdown('<div class="panel-title">Leads by Platform</div>', unsafe_allow_html=True)
-            st.markdown('<div class="panel-subtitle">Compare lead generation across advertising platforms.</div>', unsafe_allow_html=True)
+            _visual_heading("Sum of Total Leads", "by Platform")
+            lead_platform = filtered.copy()
+            lead_platform["Total Leads"] = pd.to_numeric(lead_platform["Total Leads"], errors="coerce").fillna(0)
             lead_platform = (
-                filtered.assign(**{"Total Leads": pd.to_numeric(filtered["Total Leads"], errors="coerce").fillna(0)})
-                .groupby("Platform", as_index=False)["Total Leads"].sum()
-                .sort_values("Total Leads", ascending=True)
+                lead_platform.groupby("Platform", as_index=False)["Total Leads"].sum()
+                .sort_values("Total Leads", ascending=False)
             )
             fig = px.bar(
                 lead_platform,
-                x="Total Leads",
-                y="Platform",
-                orientation="h",
-                text_auto=True,
+                x="Platform",
+                y="Total Leads",
+                text="Total Leads",
                 color_discrete_sequence=[COLORS["orange"]],
             )
             fig.update_traces(marker_line_width=0, textposition="outside", cliponaxis=False)
-            fig = style_plot(fig, height=355, legend=False)
+            fig = style_plot(fig, height=310, legend=False)
+            fig.update_xaxes(title_text="Platform", showgrid=False)
+            fig.update_yaxes(title_text="Sum of Total Leads")
             st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False})
 
-    with r1b:
+    with c2:
         with st.container(border=True):
-            st.markdown('<div class="panel-title">Total Spend by Platform</div>', unsafe_allow_html=True)
-            st.markdown('<div class="panel-subtitle">Platform-level spend. Currency is treated only as the unit of measure and is never converted or combined.</div>', unsafe_allow_html=True)
+            _visual_heading("Spend Amount", "by Platform")
             spend_scope = filtered.copy()
             spend_scope["Total Spend"] = pd.to_numeric(spend_scope["Total Spend"], errors="coerce").fillna(0)
-            spend_currencies = [str(c) for c in spend_scope["Currency"].dropna().unique().tolist()]
+            distinct_currencies = spend_scope["Currency"].dropna().astype(str).unique().tolist()
 
-            def render_spend_platform_chart(frame: pd.DataFrame, currency_code: str):
+            if currency_choice != "All" or len(distinct_currencies) <= 1:
+                code = currency_choice if currency_choice != "All" else (distinct_currencies[0] if distinct_currencies else "")
                 spend_platform = (
-                    frame.groupby("Platform", as_index=False)["Total Spend"].sum()
-                    .sort_values("Total Spend", ascending=False)
+                    spend_scope.groupby("Platform", as_index=False)["Total Spend"].sum()
+                    .sort_values("Total Spend", ascending=True)
                 )
-                symbol = symbols.get(currency_code, "")
+                symbol = symbols.get(code, "")
                 fig = px.bar(
                     spend_platform,
-                    x="Platform",
-                    y="Total Spend",
+                    x="Total Spend",
+                    y="Platform",
+                    orientation="h",
                     text=spend_platform["Total Spend"].map(lambda x: f"{symbol}{x:,.0f}"),
-                    color_discrete_sequence=[COLORS["orange_dark"]],
-                    labels={"Total Spend": f"Spend ({currency_code})"},
-                )
-                fig.update_traces(marker_line_width=0, textposition="outside", cliponaxis=False)
-                fig = style_plot(fig, height=320, legend=False)
-                st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False})
-
-            if len(spend_currencies) == 1:
-                code = spend_currencies[0]
-                render_spend_platform_chart(spend_scope, code)
-            else:
-                tabs = st.tabs(spend_currencies)
-                for tab, code in zip(tabs, spend_currencies):
-                    with tab:
-                        render_spend_platform_chart(
-                            spend_scope[spend_scope["Currency"].astype(str) == code],
-                            code,
-                        )
-
-    # ---------- Row 2: Leads by date + campaign status ----------
-    r2a, r2b = st.columns([1.65, 1], gap="medium")
-
-    with r2a:
-        with st.container(border=True):
-            st.markdown('<div class="panel-title">Leads by Date</div>', unsafe_allow_html=True)
-            st.markdown('<div class="panel-subtitle">Lead volume over time using the report date.</div>', unsafe_allow_html=True)
-            lead_date = filtered.dropna(subset=["Report Date"]).copy()
-            lead_date["Report Date"] = pd.to_datetime(lead_date["Report Date"], errors="coerce")
-            lead_date["Total Leads"] = pd.to_numeric(lead_date["Total Leads"], errors="coerce").fillna(0)
-            lead_date = lead_date.dropna(subset=["Report Date"]).groupby("Report Date", as_index=False)["Total Leads"].sum()
-            if lead_date.empty:
-                st.info("No dated rows are available for this selection.")
-            else:
-                fig = px.line(
-                    lead_date,
-                    x="Report Date",
-                    y="Total Leads",
-                    markers=True,
                     color_discrete_sequence=[COLORS["orange"]],
                 )
-                fig.update_traces(line=dict(width=3), marker=dict(size=7))
-                fig = style_plot(fig, height=355, legend=False)
-                st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False})
+                fig.update_traces(marker_line_width=0, textposition="outside", cliponaxis=False)
+                fig = style_plot(fig, height=310, legend=False)
+            else:
+                # All currencies: keep currencies separate so GBP + INR is never summed.
+                spend_platform = (
+                    spend_scope.groupby(["Platform", "Currency"], as_index=False)["Total Spend"].sum()
+                    .sort_values("Total Spend", ascending=True)
+                )
+                fig = px.bar(
+                    spend_platform,
+                    x="Total Spend",
+                    y="Platform",
+                    color="Currency",
+                    barmode="group",
+                    orientation="h",
+                    text="Total Spend",
+                    color_discrete_sequence=[COLORS["orange"], COLORS["header_grey"], COLORS["orange_soft"]],
+                )
+                fig.update_traces(
+                    marker_line_width=0,
+                    texttemplate="%{text:,.0f}",
+                    textposition="outside",
+                    cliponaxis=False,
+                )
+                fig = style_plot(fig, height=310, legend=True)
 
-    with r2b:
-        with st.container(border=True):
-            st.markdown('<div class="panel-title">Campaign Status</div>', unsafe_allow_html=True)
-            st.markdown('<div class="panel-subtitle">Current campaign mix in the selected view.</div>', unsafe_allow_html=True)
-            status_df = (
-                filtered["Campaign Status"].fillna("Unknown").astype(str)
-                .value_counts().rename_axis("Campaign Status").reset_index(name="Campaigns")
-            )
-            fig = px.pie(
-                status_df,
-                names="Campaign Status",
-                values="Campaigns",
-                hole=0.55,
-                color_discrete_sequence=PLOT_COLORS,
-            )
-            fig.update_traces(textposition="inside", textinfo="percent+label", marker=dict(line=dict(color="#FFFFFF", width=3)))
-            fig.update_layout(
-                height=355,
-                margin=dict(l=12, r=12, t=20, b=10),
-                paper_bgcolor="rgba(0,0,0,0)",
-                font=dict(family="Inter, Arial", color="#263445"),
-                showlegend=False,
-            )
+            fig.update_xaxes(title_text="")
+            fig.update_yaxes(title_text="", showgrid=False)
             st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False})
 
-    # ---------- Row 3: Top campaigns + campaign performance ----------
-    r3a, r3b = st.columns([1, 2.05], gap="medium")
-
-    with r3a:
+    with c3:
         with st.container(border=True):
-            st.markdown('<div class="panel-title">Top Campaigns by Leads</div>', unsafe_allow_html=True)
-            st.markdown('<div class="panel-subtitle">Highest lead-generating campaigns in the current selection.</div>', unsafe_allow_html=True)
-            top_campaigns = filtered.copy()
-            top_campaigns["Total Leads"] = pd.to_numeric(top_campaigns["Total Leads"], errors="coerce").fillna(0)
-            top_campaigns = (
-                top_campaigns.groupby("Campaign Name", as_index=False)["Total Leads"].sum()
-                .nlargest(8, "Total Leads")
-                .sort_values("Total Leads", ascending=True)
+            _visual_heading("Sum of Total Leads", "by Date")
+            lead_date = filtered.copy()
+            lead_date["Report Date"] = pd.to_datetime(lead_date["Report Date"], errors="coerce")
+            lead_date["Total Leads"] = pd.to_numeric(lead_date["Total Leads"], errors="coerce").fillna(0)
+            lead_date = (
+                lead_date.dropna(subset=["Report Date"])
+                .groupby("Report Date", as_index=False)["Total Leads"].sum()
+                .sort_values("Report Date")
             )
-            fig = px.bar(
-                top_campaigns,
-                x="Total Leads",
-                y="Campaign Name",
-                orientation="h",
-                text_auto=True,
-                color_discrete_sequence=[COLORS["orange_dark"]],
-                labels={"Campaign Name": "Campaign"},
+            fig = px.line(
+                lead_date,
+                x="Report Date",
+                y="Total Leads",
+                markers=False,
+                color_discrete_sequence=[COLORS["orange"]],
             )
-            fig.update_traces(textposition="outside", cliponaxis=False, marker_line_width=0)
-            fig = style_plot(fig, height=390, legend=False)
+            fig.update_traces(line=dict(width=2.5, shape="spline", smoothing=.65))
+            fig = style_plot(fig, height=310, legend=False)
+            fig.update_xaxes(title_text="", showgrid=False, tickformat="%b %Y")
+            fig.update_yaxes(title_text="")
             st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False})
 
-    with r3b:
-        with st.container(border=True):
-            st.markdown('<div class="panel-title">Campaign Performance</div>', unsafe_allow_html=True)
-            st.markdown('<div class="panel-subtitle">Campaign, platform and region level results. Currency appears only inside monetary values so different currencies are never mixed.</div>', unsafe_allow_html=True)
+    # --- Bottom row ----------------------------------------------------------
+    b1, b2 = st.columns([1104, 618], gap="small")
 
+    with b1:
+        with st.container(border=True):
             detail = filtered.copy()
-            for col in ["Total Spend", "Total Leads", "Clicks"]:
+            for col in ["Total Leads", "Total Spend", "Clicks"]:
                 detail[col] = pd.to_numeric(detail[col], errors="coerce").fillna(0)
+
             detail["Cost Per Lead"] = detail.apply(
                 lambda r: (r["Total Spend"] / r["Total Leads"]) if r["Total Leads"] else 0,
                 axis=1,
@@ -587,7 +833,7 @@ def render_dashboard():
                 axis=1,
             )
             detail["Cost Per Lead"] = detail.apply(
-                lambda r: f"{symbols.get(str(r['Currency']), '')}{r['Cost Per Lead']:,.2f} {r['Currency']}",
+                lambda r: f"{symbols.get(str(r['Currency']), '')}{r['Cost Per Lead']:,.2f}",
                 axis=1,
             )
             detail["Lead Converted %"] = detail["Lead Converted %"].map(lambda x: f"{x:.2f}%")
@@ -597,56 +843,107 @@ def render_dashboard():
                 "Campaign Name",
                 "Platform",
                 "Region",
+                "Campaign Status",
                 "Total Spend",
                 "Total Leads",
                 "Cost Per Lead",
                 "Lead Converted %",
             ]
+            detail = detail[table_cols]
+
+            total_row = {
+                "Campaign Name": "Total",
+                "Platform": "",
+                "Region": "",
+                "Campaign Status": "",
+                "Total Spend": currency_breakdown(filtered, symbols, "spend"),
+                "Total Leads": int(leads),
+                "Cost Per Lead": currency_breakdown(filtered, symbols, "cpl"),
+                "Lead Converted %": ratio_text(conversion),
+            }
+            table_view = pd.concat([detail, pd.DataFrame([total_row])], ignore_index=True)
             st.dataframe(
-                detail[table_cols],
+                _table_styler(table_view),
                 hide_index=True,
                 use_container_width=True,
-                height=345,
+                height=303,
                 column_config={
-                    "Campaign Name": st.column_config.TextColumn("Campaign"),
-                    "Lead Converted %": st.column_config.TextColumn("Lead Converted"),
+                    "Campaign Name": st.column_config.TextColumn("Campaign Name", width="large"),
+                    "Platform": st.column_config.TextColumn("Platform", width="small"),
+                    "Region": st.column_config.TextColumn("Region", width="small"),
+                    "Campaign Status": st.column_config.TextColumn("Campaign Status", width="small"),
+                    "Total Spend": st.column_config.TextColumn("Total Spend", width="medium"),
+                    "Total Leads": st.column_config.NumberColumn("Sum of Total Leads", format="%d", width="small"),
+                    "Cost Per Lead": st.column_config.TextColumn("Cost Per Lead", width="medium"),
+                    "Lead Converted %": st.column_config.TextColumn("Lead Converted", width="small"),
                 },
             )
 
-    # ---------- Row 4: Platform efficiency ----------
-    with st.container(border=True):
-        st.markdown('<div class="panel-title">Platform Efficiency</div>', unsafe_allow_html=True)
-        st.markdown('<div class="panel-subtitle">CTR and lead conversion by platform, focused on performance rather than currency.</div>', unsafe_allow_html=True)
-        perf = filtered.copy()
-        for col in ["Clicks", "Impressions", "Total Leads"]:
-            perf[col] = pd.to_numeric(perf[col], errors="coerce").fillna(0)
-        perf = perf.groupby("Platform", as_index=False)[["Clicks", "Impressions", "Total Leads"]].sum()
-        perf["CTR"] = perf.apply(lambda r: (r["Clicks"] / r["Impressions"] * 100) if r["Impressions"] else 0, axis=1)
-        perf["Lead Conversion"] = perf.apply(lambda r: (r["Total Leads"] / r["Clicks"] * 100) if r["Clicks"] else 0, axis=1)
-        perf_long = perf.melt(
-            id_vars="Platform",
-            value_vars=["CTR", "Lead Conversion"],
-            var_name="Metric",
-            value_name="Rate",
-        )
-        fig = px.bar(
-            perf_long,
-            x="Platform",
-            y="Rate",
-            color="Metric",
-            barmode="group",
-            text=perf_long["Rate"].map(lambda x: f"{x:.1f}%"),
-            color_discrete_sequence=[COLORS["orange"], COLORS["orange_dark"]],
-            labels={"Rate": "Rate (%)"},
-        )
-        fig.update_traces(textposition="outside", cliponaxis=False, marker_line_width=0)
-        fig = style_plot(fig, height=340, legend=True)
-        st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False})
+    with b2:
+        with st.container(border=True):
+            _visual_heading("Sum of Total Leads", "by Campaign Name")
+            campaigns = filtered.copy()
+            campaigns["Total Leads"] = pd.to_numeric(campaigns["Total Leads"], errors="coerce").fillna(0)
+            campaigns = (
+                campaigns.groupby("Campaign Name", as_index=False)["Total Leads"].sum()
+                .sort_values("Total Leads", ascending=False)
+                .head(5)
+                .sort_values("Total Leads", ascending=True)
+            )
+            fig = px.bar(
+                campaigns,
+                x="Total Leads",
+                y="Campaign Name",
+                orientation="h",
+                color_discrete_sequence=[COLORS["orange"]],
+            )
+            fig.update_traces(marker_line_width=0)
+            fig = style_plot(fig, height=318, legend=False)
+            fig.update_xaxes(title_text="", showgrid=True)
+            fig.update_yaxes(title_text="", showgrid=False)
+            st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False})
 
-    st.caption(
-        f"Source: {STORE.path.name} · {len(filtered):,} filtered campaign rows · "
-        "Currency is used only to keep financial values mathematically valid; analysis is centered on campaign performance."
-    )
+
+# -----------------------------------------------------------------------------
+# Data Manager post-action state helpers
+# -----------------------------------------------------------------------------
+def _queue_manager_success(action: str, company: str, message: str, backup_name: str | None = None):
+    """Persist a success message across rerun and request a clean form reset."""
+    st.session_state["_manager_flash"] = {
+        "message": message,
+        "backup": backup_name or "",
+    }
+    st.session_state["_manager_reset"] = {
+        "action": action,
+        "company": company,
+    }
+
+
+def _consume_manager_post_action():
+    """Clear the completed operation's widgets before they are instantiated again."""
+    reset = st.session_state.pop("_manager_reset", None)
+    if reset:
+        action = reset.get("action")
+        company = reset.get("company", "")
+
+        if action == "add":
+            prefixes = [f"add_{company}_"]
+            exact_keys = []
+        elif action == "edit":
+            prefixes = [f"edit_{company}_"]
+            exact_keys = [f"edit_choice_{company}"]
+        elif action == "delete":
+            prefixes = []
+            exact_keys = [f"delete_choice_{company}", f"delete_confirm_{company}"]
+        else:
+            prefixes, exact_keys = [], []
+
+        for key in list(st.session_state.keys()):
+            if key in exact_keys or any(str(key).startswith(prefix) for prefix in prefixes):
+                del st.session_state[key]
+
+    return st.session_state.pop("_manager_flash", None)
+
 
 # -----------------------------------------------------------------------------
 # Data Manager
@@ -796,6 +1093,10 @@ def record_form(prefix: str, company: str, defaults: dict | None = None):
 
 
 def render_data_manager():
+    # Process the previous successful operation before creating any widgets.
+    # This lets us safely reset the completed form and show a persistent message.
+    flash = _consume_manager_post_action()
+
     master, companies, _ = get_data()
     company_names = companies["Company Name"].dropna().astype(str).tolist()
 
@@ -808,6 +1109,11 @@ def render_data_manager():
         """,
         unsafe_allow_html=True,
     )
+
+    if flash:
+        st.success(flash.get("message", "Operation completed successfully."))
+        if flash.get("backup"):
+            st.caption(f"Automatic backup: {flash['backup']}")
 
     company = st.selectbox("Company", company_names, key="manager_company")
     allowed = STORE.allowed_currencies(company)
@@ -846,10 +1152,12 @@ def render_data_manager():
                 try:
                     result = STORE.save_record(company, record, report_date, s_no=None)
                     clear_data_cache()
-                    st.success(
-                        f"Created {company} S.No {result.s_no}. The individual sheet and MasterData were both updated."
+                    _queue_manager_success(
+                        "add",
+                        company,
+                        f"Created {company} S.No {result.s_no} successfully. The company sheet and MasterData were both updated.",
+                        result.backup_path.name,
                     )
-                    st.caption(f"Automatic backup: {result.backup_path.name}")
                     st.rerun()
                 except Exception as exc:
                     st.error(f"Save failed: {exc}")
@@ -877,10 +1185,12 @@ def render_data_manager():
                     try:
                         result = STORE.save_record(company, record, report_date, s_no=s_no)
                         clear_data_cache()
-                        st.success(
-                            f"Updated {company} S.No {result.s_no} in both the company sheet and MasterData."
+                        _queue_manager_success(
+                            "edit",
+                            company,
+                            f"Updated {company} S.No {result.s_no} successfully in both the company sheet and MasterData.",
+                            result.backup_path.name,
                         )
-                        st.caption(f"Automatic backup: {result.backup_path.name}")
                         st.rerun()
                     except Exception as exc:
                         st.error(f"Update failed: {exc}")
@@ -897,13 +1207,20 @@ def render_data_manager():
             }
             choice = st.selectbox("Choose record to delete", list(delete_map.keys()), key=f"delete_choice_{company}")
             s_no = delete_map[choice]
-            confirm = st.checkbox("I understand this deletes the row from MasterData and the individual company sheet.")
+            confirm = st.checkbox(
+                "I understand this deletes the row from MasterData and the individual company sheet.",
+                key=f"delete_confirm_{company}",
+            )
             if st.button("Delete selected record", type="primary", disabled=not confirm, use_container_width=True):
                 try:
                     result = STORE.delete_record(company, s_no)
                     clear_data_cache()
-                    st.success(f"Deleted {company} S.No {s_no} from both locations.")
-                    st.caption(f"Automatic backup: {result.backup_path.name}")
+                    _queue_manager_success(
+                        "delete",
+                        company,
+                        f"Deleted {company} S.No {s_no} successfully from both MasterData and the company sheet.",
+                        result.backup_path.name,
+                    )
                     st.rerun()
                 except Exception as exc:
                     st.error(f"Delete failed: {exc}")
@@ -931,8 +1248,7 @@ with st.sidebar:
     st.markdown("### Marketing Hub")
     page = st.radio("Navigation", ["Dashboard", "Data Manager"], label_visibility="collapsed")
     st.divider()
-    st.caption("Excel-backed dashboard")
-    st.caption("No FX conversion")
+    
 
 if page == "Dashboard":
     render_dashboard()
